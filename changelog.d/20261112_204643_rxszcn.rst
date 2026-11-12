@@ -1,0 +1,11 @@
+Fixed
+~~~~~
+
+- The introspection endpoint no longer reports a refresh token as inactive
+  when the access token paired with it is expired. Token models can expose
+  an ``is_refresh_token(token_string)`` method so the endpoint applies the
+  validity semantics of the presented token; the SQLAlchemy
+  ``OAuth2TokenMixin`` provides it. ``IntrospectionEndpoint`` also gains an
+  ``is_token_expired(token, token_string)`` hook, and
+  ``create_introspection_payload`` accepts the presented token string as an
+  optional second parameter.

@@ -69,6 +69,13 @@ class OAuth2TokenMixin(TokenMixin):
     def is_revoked(self):
         return self.access_token_revoked_at or self.refresh_token_revoked_at
 
+    def is_refresh_token(self, token_string):
+        """Whether the given token string is the refresh token of this
+        record. The introspection endpoint uses it to apply the validity
+        semantics of the presented token instead of the access token ones.
+        """
+        return bool(self.refresh_token) and token_string == self.refresh_token
+
     def is_expired(self):
         if not self.expires_in:
             return False

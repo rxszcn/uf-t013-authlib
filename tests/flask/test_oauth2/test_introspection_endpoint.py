@@ -182,3 +182,118 @@ def test_introspect_token_with_unknown_hint(test_client, token):
     assert rv.status_code == 200
     resp = json.loads(rv.data)
     assert resp["active"]
+
+
+@pytest.fixture
+def expired_access_token(db, monkeypatch):
+    """A token record whose access token is expired while its refresh
+    token is still valid."""
+    issued_at = 1700000000
+    monkeypatch.setattr("time.time", lambda: issued_at)
+    token = Token(
+        user_id=1,
+        client_id="client-id",
+        token_type="bearer",
+        access_token="a2",
+        refresh_token="r2",
+        scope="profile",
+        expires_in=3600,
+    )
+    db.session.add(token)
+    db.session.commit()
+    # move the clock past the access token lifetime
+    monkeypatch.setattr("time.time", lambda: issued_at + 3601)
+    yield token
+    db.session.delete(token)
+    db.session.commit()
+
+
+def test_introspect_expired_access_token(test_client, expired_access_token):
+    headers = create_basic_header("client-id", "client-secret")
+    rv = test_client.post(
+        "/oauth/introspect",
+        data={"token": "a2"},
+        headers=headers,
+    )
+    assert rv.status_code == 200
+    resp = json.loads(rv.data)
+    assert resp["active"] is False
+
+
+def test_introspect_refresh_token_with_expired_access_token(
+    test_client, expired_access_token
+):
+    """An expired access token must not make its still valid refresh token
+    introspect as inactive."""
+    headers = create_basic_header("client-id", "client-secret")
+    for data in (
+        {"token": "r2"},
+        {"token": "r2", "token_type_hint": "refresh_token"},
+    ):
+        rv = test_client.post(
+            "/oauth/introspect",
+            data=data,
+            headers=headers,
+        )
+        assert rv.status_code == 200
+        resp = json.loads(rv.data)
+        assert resp["active"] is True
+        assert resp["client_id"] == "client-id"
+
+
+def test_introspect_revoked_refresh_token(test_client, db, expired_access_token):
+    """A revoked refresh token introspects as inactive, even though refresh
+    tokens have no lifetime of their own."""
+    expired_access_token.refresh_token_revoked_at = 1700003601
+    db.session.add(expired_access_token)
+    db.session.commit()
+
+    headers = create_basic_header("client-id", "client-secret")
+    rv = test_client.post(
+        "/oauth/introspect",
+        data={"token": "r2"},
+        headers=headers,
+    )
+    assert rv.status_code == 200
+    resp = json.loads(rv.data)
+    assert resp["active"] is False
+
+
+def test_introspect_access_token_with_revoked_refresh_token(
+    test_client, db, expired_access_token
+):
+    """The revocation cascade is unchanged: revoking the refresh token also
+    invalidates the access token."""
+    expired_access_token.refresh_token_revoked_at = 1700003601
+    db.session.add(expired_access_token)
+    db.session.commit()
+
+    headers = create_basic_header("client-id", "client-secret")
+    rv = test_client.post(
+        "/oauth/introspect",
+        data={"token": "a2"},
+        headers=headers,
+    )
+    assert rv.status_code == 200
+    resp = json.loads(rv.data)
+    assert resp["active"] is False
+
+
+def test_introspect_refresh_token_with_revoked_access_token(
+    test_client, db, expired_access_token
+):
+    """The revocation semantics are unchanged: a record revoked on the
+    access token side introspects as inactive."""
+    expired_access_token.access_token_revoked_at = 1700003601
+    db.session.add(expired_access_token)
+    db.session.commit()
+
+    headers = create_basic_header("client-id", "client-secret")
+    rv = test_client.post(
+        "/oauth/introspect",
+        data={"token": "r2"},
+        headers=headers,
+    )
+    assert rv.status_code == 200
+    resp = json.loads(rv.data)
+    assert resp["active"] is False

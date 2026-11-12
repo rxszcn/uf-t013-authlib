@@ -62,22 +62,54 @@ class IntrospectionEndpoint(TokenEndpoint):
         token = self.authenticate_token(request, client)
 
         # the authorization server invalidates the token
-        body = self.create_introspection_payload(token)
+        body = self.create_introspection_payload(token, request.form["token"])
         return JsonResponse(body)
 
-    def create_introspection_payload(self, token):
+    def create_introspection_payload(self, token, token_string=None):
         # the token is not active, does not exist on this server, or the
         # protected resource is not allowed to introspect this particular
         # token, then the authorization server MUST return an introspection
         # response with the "active" field set to "false"
         if not token:
             return {"active": False}
-        if token.is_expired() or token.is_revoked():
+        if token.is_revoked():
+            return {"active": False}
+        if self.is_token_expired(token, token_string):
             return {"active": False}
         payload = self.introspect_token(token)
         if "active" not in payload:
             payload["active"] = True
         return payload
+
+    def is_token_expired(self, token, token_string=None):
+        """Whether the presented token is expired. A token record may pair an
+        access token with a refresh token, while ``token.is_expired()`` only
+        describes the access token. When the presented ``token_string`` is the
+        refresh token of the record, the access token lifetime does not apply,
+        and the token is considered not expired. Token models can tell which
+        of their tokens is being introspected with an ``is_refresh_token``
+        method::
+
+            def is_refresh_token(self, token_string):
+                return token_string == self.refresh_token
+
+        Developers MAY re-implement this method, e.g. when their refresh
+        tokens do expire::
+
+            def is_token_expired(self, token, token_string=None):
+                if token.is_refresh_token(token_string):
+                    return token.refresh_token_expires_at < time.time()
+                return token.is_expired()
+
+        :param token: the token record found by ``query_token``
+        :param token_string: the token string sent by the protected resource
+        :return: bool
+        """
+        if token_string is not None:
+            is_refresh_token = getattr(token, "is_refresh_token", None)
+            if is_refresh_token is not None and is_refresh_token(token_string):
+                return False
+        return token.is_expired()
 
     def check_permission(self, token, client, request):
         """Check if the request has permission to introspect the token. Developers

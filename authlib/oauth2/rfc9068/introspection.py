@@ -58,7 +58,7 @@ class JWTIntrospectionEndpoint(IntrospectionEndpoint):
         token = self.authenticate_token(request, client)
 
         # the authorization server invalidates the token
-        body = self.create_introspection_payload(token)
+        body = self.create_introspection_payload(token, request.form["token"])
         return JsonResponse(body)
 
     def authenticate_token(self, request, client):
@@ -81,7 +81,9 @@ class JWTIntrospectionEndpoint(IntrospectionEndpoint):
         if self.check_permission(token, client, request):
             return token
 
-    def create_introspection_payload(self, token: JWTAccessTokenClaims):
+    def create_introspection_payload(
+        self, token: JWTAccessTokenClaims, token_string=None
+    ):
         if not token:
             return {"active": False}
 
